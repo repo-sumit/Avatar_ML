@@ -2,18 +2,23 @@
 
 Run with:
     uvicorn services.api.main:app --reload
+
+The UI lives at http://localhost:8000/ (serves tests/ui.html via StaticFiles).
 """
 
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from services.api.db import init_db
 from services.api.routes import (
     avatar_profiles,
+    generate_video,
     sessions,
     voice_profiles,
     webrtc,
@@ -35,9 +40,7 @@ log = logging.getLogger("avatar_ml")
 
 app = FastAPI(title="Avatar_ML control plane", version="0.1.0")
 
-# The browser at tests/test_page.html is served from the filesystem (file://)
-# or loopback; permit any origin for the local demo. Tighten this when you add
-# a real frontend.
+# CORS — fine for local demo; tighten when you add a real frontend host.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -46,17 +49,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory live state. Mapped by session_id -> SessionState. See
-# services/api/routes/sessions.py for the dataclass.
-app.state.sessions = {}
+# In-memory state. Both keys must exist before any router uses them.
+app.state.sessions = {}    # session_id -> SessionState (services/api/routes/sessions.py)
+app.state.jobs = {}        # job_id -> JobState (services/api/routes/generate_video.py)
 
 
 @app.on_event("startup")
 async def on_startup() -> None:
     init_db()
+    Path("storage/outputs").mkdir(parents=True, exist_ok=True)
     log.info("DB initialized at %s", settings.database_url)
     log.info("COLAB_INFERENCE_URL=%s", settings.colab_inference_url or "(unset)")
-    # Best-effort connectivity check; we don't block startup on it.
     try:
         client = ColabWorkerClient.from_env()
         health = await client.health_check()
@@ -72,8 +75,25 @@ def healthz() -> dict:
     return {"status": "ok", "service": "avatar-ml-control-plane"}
 
 
+# API routers.
 app.include_router(voice_profiles.router)
 app.include_router(avatar_profiles.router)
 app.include_router(sessions.router)
 app.include_router(webrtc.router)
 app.include_router(ws_sessions.router)
+app.include_router(generate_video.router)
+
+
+# Static mounts.
+# `/storage/outputs/<run_id>/output.mp4` is consumed directly by the <video>
+# tag in the UI. Other storage subdirs are not exposed.
+app.mount(
+    "/storage/outputs",
+    StaticFiles(directory="storage/outputs"),
+    name="outputs",
+)
+
+# Serve the UI at `/`. `html=True` makes /  fall through to index.html and
+# allows ui.html to be reachable at /ui.html. Mounting last so it doesn't
+# shadow the API routes above.
+app.mount("/", StaticFiles(directory="tests", html=True), name="ui")

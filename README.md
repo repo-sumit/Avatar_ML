@@ -40,23 +40,31 @@ Drop your input media:
 python -c "import asyncio; from services.inference_client.colab_worker_client import ColabWorkerClient; print(asyncio.run(ColabWorkerClient.from_env().health_check()))"
 ```
 
-## Run end-to-end (batch MP4)
+## Run the UI (recommended)
 
 ```powershell
-python scripts/create_voice_profile.py samples/voice.wav --name "demo"
-python scripts/create_avatar_profile.py samples/face.mp4 --name "demo"
-python scripts/generate_video.py --voice voice_xxxxxxxx --avatar avatar_xxxxxxxx --text "Hello world"
+.\.venv\Scripts\python.exe -m uvicorn services.api.main:app --reload
 ```
 
-Output lands at `storage/outputs/<run_id>/output.mp4`.
+Open <http://localhost:8000/> in Chrome. You'll see a single page with three cards:
 
-## Run streaming (Mode B)
+1. **Voice profile** — pick an existing one from the dropdown, or upload a new `.wav` and click *Create voice profile*. First upload triggers a one-time Colab lazy-load (~40 s).
+2. **Avatar profile** — pick existing or upload a new `.mp4` (use `samples/face_opt.mp4`). MuseTalk preprocessing runs on Colab and takes 1–3 minutes.
+3. **Generate** — type text, click *Generate video*, watch the progress bar advance through `tts → lipsync → muxing → done`. The video player + Download button appear when finished.
+
+## Run end-to-end via CLI (alternative)
 
 ```powershell
-uvicorn services.api.main:app --reload
+.\.venv\Scripts\python.exe scripts\create_voice_profile.py samples\voice.wav --name "demo"
+.\.venv\Scripts\python.exe scripts\create_avatar_profile.py samples\face_opt.mp4 --name "demo"
+.\.venv\Scripts\python.exe scripts\generate_video.py --voice voice_xxxxxxxx --avatar avatar_xxxxxxxx --text "Hello world"
 ```
 
-Open `tests/test_page.html` in Chrome. Edit the `voice_xxx` and `avatar_xxx` placeholders at the top of the file with the IDs you got from the scripts above. Click **Connect**, type text, click **Speak**.
+Output lands at `storage\outputs\<run_id>\output.mp4`. The CLI and the UI call the same `services/api/pipeline.generate()` under the hood.
+
+## WebRTC streaming preview (Mode B)
+
+Same `uvicorn` server, open `http://localhost:8000/test_page.html`. Edit `VOICE_PROFILE_ID` / `AVATAR_PROFILE_ID` at the top of `tests/test_page.html` with your IDs. Click **Connect**, type text, click **Speak**.
 
 ## When Colab disconnects
 

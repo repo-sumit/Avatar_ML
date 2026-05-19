@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./.venv/Scripts/python.exe -m py_compile services/api/pipeline.py services/api/routes/generate_video.py services/api/routes/voice_profiles.py services/api/routes/avatar_profiles.py services/api/main.py scripts/generate_video.py)",
+      "Bash(./.venv/Scripts/python.exe -c \"from services.api.main import app; print\\('app:', app.title\\); print\\(\\); print\\('Routes:'\\); [print\\(' ', getattr\\(r, 'methods', {'?'}\\), r.path\\) for r in app.routes if hasattr\\(r, 'path'\\)]\")",
+      "Bash(./.venv/Scripts/python.exe -c ' *)"
+    ]
+  }
+}
