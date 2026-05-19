@@ -1,8 +1,8 @@
 """Avatar profile routes.
 
 Profiles are stored under storage/avatars/<id>/ with a profile.json index file.
-Filesystem is the source of truth — both this route and the CLI script write
-the same layout.
+The `create_avatar_profile_impl` helper is the actual creation logic, factored
+out so the unified `/api/profiles` route can also call it.
 """
 
 from __future__ import annotations
@@ -51,17 +51,17 @@ def _scan_profiles() -> list[dict]:
     return out
 
 
-@router.get("")
-def list_avatar_profiles() -> list[dict]:
-    return _scan_profiles()
-
-
-@router.post("")
-async def create_avatar_profile(
-    video: UploadFile = File(...),
-    person_name: str = Form(...),
-    fps: str = Form("25"),
+async def create_avatar_profile_impl(
+    video: UploadFile,
+    person_name: str,
+    fps: str = "25",
 ) -> dict:
+    """Reusable create-avatar-profile body.
+
+    Called by:
+      - POST /api/avatar-profiles (this file)
+      - POST /api/profiles (services/api/routes/profiles.py)
+    """
     avatar_id = f"avatar_{uuid.uuid4().hex[:8]}"
     target = STORAGE_DIR / avatar_id
     target.mkdir(parents=True, exist_ok=True)
@@ -74,12 +74,12 @@ async def create_avatar_profile(
     try:
         tar_bytes = await client.preprocess_avatar(source_path)
     except RemoteWorkerUnavailable as exc:
+        shutil.rmtree(target, ignore_errors=True)
         raise HTTPException(status_code=503, detail=f"Colab worker unavailable: {exc}")
 
     cache_path = target / "cache.tar.gz"
     cache_path.write_bytes(tar_bytes)
 
-    # Anchor avatar_id on the current Colab session so lipsync can find the cache.
     try:
         await client.upload_avatar_cache(avatar_id, tar_bytes)
     except RemoteWorkerUnavailable as exc:
@@ -113,6 +113,20 @@ async def create_avatar_profile(
         "fps": fps,
         "created_at": created_at,
     }
+
+
+@router.get("")
+def list_avatar_profiles() -> list[dict]:
+    return _scan_profiles()
+
+
+@router.post("")
+async def create_avatar_profile(
+    video: UploadFile = File(...),
+    person_name: str = Form(...),
+    fps: str = Form("25"),
+) -> dict:
+    return await create_avatar_profile_impl(video, person_name, fps)
 
 
 @router.post("/{avatar_id}/rehydrate")

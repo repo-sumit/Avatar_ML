@@ -46,11 +46,14 @@ python -c "import asyncio; from services.inference_client.colab_worker_client im
 .\.venv\Scripts\python.exe -m uvicorn services.api.main:app --reload
 ```
 
-Open <http://localhost:8000/> in Chrome. You'll see a single page with three cards:
+Open <http://localhost:8000/> in Chrome. The UI has two cards:
 
-1. **Voice profile** — pick an existing one from the dropdown, or upload a new `.wav` and click *Create voice profile*. First upload triggers a one-time Colab lazy-load (~40 s).
-2. **Avatar profile** — pick existing or upload a new `.mp4` (use `samples/face_opt.mp4`). MuseTalk preprocessing runs on Colab and takes 1–3 minutes.
-3. **Generate** — type text, click *Generate video*, watch the progress bar advance through `tts → lipsync → muxing → done`. The video player + Download button appear when finished.
+1. **Profile** — one entity per person, holding a voice sample + face video together.
+   - **Use existing**: pick a previously-created profile from the dropdown.
+   - **Create new**: enter a name, choose a `.wav` (voice) and `.mp4` (face), click *Create profile*. The server extracts the voice embedding (~5–60 s) and runs MuseTalk preprocessing on the video (~1–3 min). On success the new profile appears in the dropdown.
+2. **Generate** — type text, click *Generate video*, watch the progress bar advance through `tts → lipsync → muxing → done`. The video player + Download button appear when finished.
+
+A "Profile" is the simplest unit you can iterate on: create once per person, then run unlimited Generate calls against the same profile with different text.
 
 ## Run end-to-end via CLI (alternative)
 

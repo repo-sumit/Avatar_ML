@@ -19,6 +19,7 @@ from services.api.db import init_db
 from services.api.routes import (
     avatar_profiles,
     generate_video,
+    profiles,
     sessions,
     voice_profiles,
     webrtc,
@@ -76,6 +77,7 @@ def healthz() -> dict:
 
 
 # API routers.
+app.include_router(profiles.router)
 app.include_router(voice_profiles.router)
 app.include_router(avatar_profiles.router)
 app.include_router(sessions.router)

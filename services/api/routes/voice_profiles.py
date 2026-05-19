@@ -3,6 +3,9 @@
 Profiles are stored under storage/voices/<id>/ with a profile.json index file.
 Filesystem is the source of truth — both this route and the CLI script write
 the same layout, so listings work regardless of which created the profile.
+
+The `create_voice_profile_impl` helper is the actual creation logic, factored
+out so the unified `/api/profiles` route can also call it.
 """
 
 from __future__ import annotations
@@ -40,7 +43,6 @@ def _scan_profiles() -> list[dict]:
             data = json.loads(pj.read_text())
         except Exception:
             continue
-        # mtime as the proxy "created_at" since not all profile.json files have one.
         created = data.get("created_at") or datetime.fromtimestamp(
             pj.stat().st_mtime
         ).isoformat()
@@ -53,16 +55,21 @@ def _scan_profiles() -> list[dict]:
     return out
 
 
-@router.get("")
-def list_voice_profiles() -> list[dict]:
-    return _scan_profiles()
-
-
-@router.post("")
-async def create_voice_profile(
-    audio: UploadFile = File(...),
-    person_name: str = Form(...),
+async def create_voice_profile_impl(
+    audio: UploadFile,
+    person_name: str,
 ) -> dict:
+    """Reusable create-voice-profile body.
+
+    Called by:
+      - POST /api/voice-profiles (this file)
+      - POST /api/profiles (services/api/routes/profiles.py)
+
+    On success writes:
+      storage/voices/<voice_id>/source.wav
+      storage/voices/<voice_id>/embedding.npy
+      storage/voices/<voice_id>/profile.json
+    """
     voice_id = f"voice_{uuid.uuid4().hex[:8]}"
     target = STORAGE_DIR / voice_id
     target.mkdir(parents=True, exist_ok=True)
@@ -75,6 +82,8 @@ async def create_voice_profile(
     try:
         npy_bytes = await client.extract_voice_embedding(source_path)
     except RemoteWorkerUnavailable as exc:
+        # Roll back the directory so we don't leave a half-created profile.
+        shutil.rmtree(target, ignore_errors=True)
         raise HTTPException(status_code=503, detail=f"Colab worker unavailable: {exc}")
 
     embedding_path = target / "embedding.npy"
@@ -89,8 +98,6 @@ async def create_voice_profile(
     }
     (target / "profile.json").write_text(json.dumps(profile, indent=2))
 
-    # Best-effort DB row (the filesystem is the source of truth, this is
-    # additional metadata).
     with SessionLocal() as session:
         session.merge(VoiceProfile(
             id=voice_id,
@@ -107,6 +114,19 @@ async def create_voice_profile(
         "embedding_path": str(embedding_path),
         "created_at": created_at,
     }
+
+
+@router.get("")
+def list_voice_profiles() -> list[dict]:
+    return _scan_profiles()
+
+
+@router.post("")
+async def create_voice_profile(
+    audio: UploadFile = File(...),
+    person_name: str = Form(...),
+) -> dict:
+    return await create_voice_profile_impl(audio, person_name)
 
 
 @router.get("/{voice_id}")

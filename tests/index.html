@@ -44,9 +44,7 @@
       border-color: var(--accent); padding: 8px 14px;
     }
     button[disabled] { opacity: 0.5; cursor: not-allowed; }
-    button.ghost {
-      background: #fff; color: var(--accent);
-    }
+    button.ghost { background: #fff; color: var(--accent); }
     .status { font-size: 13px; color: var(--muted); margin-top: 8px; min-height: 18px; }
     .status.ok { color: var(--ok); }
     .status.err { color: var(--err); white-space: pre-wrap; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
@@ -63,6 +61,17 @@
       font-size: 11px; background: #eee; color: #444; margin-left: 4px;
     }
     a { color: var(--accent); }
+    .field-grid {
+      display: grid; grid-template-columns: 80px 1fr; gap: 8px 10px; align-items: center;
+      margin-top: 8px;
+    }
+    .field-grid > label { font-weight: 500; }
+    fieldset {
+      border: 1px dashed var(--border); border-radius: 6px; padding: 12px 16px;
+      margin-top: 6px;
+    }
+    fieldset[disabled] { opacity: 0.45; }
+    fieldset legend { font-size: 12px; color: var(--muted); padding: 0 6px; }
   </style>
 </head>
 <body>
@@ -70,43 +79,40 @@
 <h1>Avatar_ML <span class="pill">Phase 0</span></h1>
 <p class="sub">Type text, get a video of your cloned avatar saying it. Powered by OpenVoice V2 + MuseTalk on Colab.</p>
 
-<!-- ─────────────────────────────────────────────────────────────── 1. Voice -->
+<!-- ─────────────────────────────────────────── 1. Profile (unified) -->
 <div class="card">
-  <h2>1. Voice profile</h2>
+  <h2>1. Profile</h2>
+  <p class="sub" style="margin: 0 0 6px 0;">A profile is one person: a name + a voice sample + a face video. Re-usable for unlimited Generate calls.</p>
+
   <div class="row">
-    <label><input type="radio" name="voice_mode" value="existing" checked /> Use existing</label>
-    <select id="voice_select"></select>
-    <button class="ghost" id="voice_refresh" type="button">↻</button>
+    <label><input type="radio" name="profile_mode" value="existing" checked /> Use existing</label>
+    <select id="profile_select"></select>
+    <button class="ghost" id="profile_refresh" type="button">↻</button>
   </div>
-  <div class="row">
-    <label><input type="radio" name="voice_mode" value="upload" /> Upload new</label>
-    <input type="file" id="voice_file" accept="audio/wav,audio/mpeg,audio/*" />
-    <input type="text" id="voice_name" placeholder="Person name" />
-    <button id="voice_create" type="button">Create voice profile</button>
-  </div>
-  <div class="status" id="voice_status"></div>
+
+  <fieldset id="profile_new_box" disabled>
+    <legend>Create new</legend>
+    <div class="row">
+      <label><input type="radio" name="profile_mode" value="create" /> Create new</label>
+    </div>
+    <div class="field-grid">
+      <label>Name</label>
+      <input type="text" id="profile_name" placeholder="e.g. Sumit" />
+      <label>Voice</label>
+      <input type="file" id="profile_audio" accept="audio/wav,audio/mpeg,audio/*" />
+      <label>Face</label>
+      <input type="file" id="profile_video" accept="video/mp4,video/quicktime,video/*" />
+      <label></label>
+      <div><button id="profile_create" type="button">Create profile</button></div>
+    </div>
+  </fieldset>
+
+  <div class="status" id="profile_status"></div>
 </div>
 
-<!-- ─────────────────────────────────────────────────────────────── 2. Avatar -->
+<!-- ─────────────────────────────────────────── 2. Generate -->
 <div class="card">
-  <h2>2. Avatar profile</h2>
-  <div class="row">
-    <label><input type="radio" name="avatar_mode" value="existing" checked /> Use existing</label>
-    <select id="avatar_select"></select>
-    <button class="ghost" id="avatar_refresh" type="button">↻</button>
-  </div>
-  <div class="row">
-    <label><input type="radio" name="avatar_mode" value="upload" /> Upload new</label>
-    <input type="file" id="avatar_file" accept="video/mp4,video/quicktime,video/*" />
-    <input type="text" id="avatar_name" placeholder="Person name" />
-    <button id="avatar_create" type="button">Create avatar profile</button>
-  </div>
-  <div class="status" id="avatar_status"></div>
-</div>
-
-<!-- ─────────────────────────────────────────────────────────────── 3. Generate -->
-<div class="card">
-  <h2>3. Generate video</h2>
+  <h2>2. Generate video</h2>
   <textarea id="text" placeholder="Type what your avatar should say...">Hello, this is my AI avatar speaking in my cloned voice.</textarea>
   <div class="row">
     <button id="generate" type="button">Generate video</button>
@@ -123,7 +129,6 @@
 <script>
 const API = location.origin;
 
-// ─── helpers ────────────────────────────────────────────────────────────────
 function $(id) { return document.getElementById(id); }
 async function jget(path) {
   const r = await fetch(API + path);
@@ -148,108 +153,97 @@ function setStatus(el, msg, kind) {
   el.className = 'status' + (kind ? ' ' + kind : '');
   el.textContent = msg;
 }
-function modeOf(name) {
-  return document.querySelector(`input[name=${name}]:checked`).value;
+
+// ─── profile radio toggle ───────────────────────────────────────────────────
+document.querySelectorAll('input[name=profile_mode]').forEach(r => {
+  r.addEventListener('change', updateProfileMode);
+});
+function updateProfileMode() {
+  const mode = document.querySelector('input[name=profile_mode]:checked').value;
+  $('profile_select').disabled  = mode !== 'existing';
+  $('profile_refresh').disabled = mode !== 'existing';
+  $('profile_new_box').disabled = mode !== 'create';
 }
 
-// ─── dropdown loaders ───────────────────────────────────────────────────────
-async function loadVoices() {
+// ─── profile list ───────────────────────────────────────────────────────────
+let profilesCache = [];
+async function loadProfiles() {
   try {
-    const rows = await jget('/api/voice-profiles');
-    const sel = $('voice_select');
+    profilesCache = await jget('/api/profiles');
+    const sel = $('profile_select');
     sel.innerHTML = '';
-    if (!rows.length) {
+    if (!profilesCache.length) {
       const o = document.createElement('option');
-      o.textContent = '(no voice profiles — upload new)';
+      o.textContent = '(no profiles yet — create one below)';
       o.value = '';
       sel.appendChild(o);
-      // Auto-switch to upload mode.
-      document.querySelector('input[name=voice_mode][value=upload]').checked = true;
+      sel.disabled = true;
+      // Switch to create mode by default if no profiles exist.
+      document.querySelector('input[name=profile_mode][value=create]').checked = true;
+      updateProfileMode();
     } else {
-      for (const r of rows) {
+      for (const p of profilesCache) {
         const o = document.createElement('option');
-        o.value = r.id;
-        o.textContent = `${r.person_name} (${r.id})`;
+        o.value = p.name;
+        o.textContent = `${p.name}  —  ${p.voice_id} + ${p.avatar_id}`;
         sel.appendChild(o);
       }
+      sel.disabled = false;
     }
   } catch (e) {
-    setStatus($('voice_status'), e.message, 'err');
+    setStatus($('profile_status'), e.message, 'err');
   }
 }
-async function loadAvatars() {
-  try {
-    const rows = await jget('/api/avatar-profiles');
-    const sel = $('avatar_select');
-    sel.innerHTML = '';
-    if (!rows.length) {
-      const o = document.createElement('option');
-      o.textContent = '(no avatar profiles — upload new)';
-      o.value = '';
-      sel.appendChild(o);
-      document.querySelector('input[name=avatar_mode][value=upload]').checked = true;
-    } else {
-      for (const r of rows) {
-        const o = document.createElement('option');
-        o.value = r.id;
-        o.textContent = `${r.person_name} (${r.id})`;
-        sel.appendChild(o);
-      }
-    }
-  } catch (e) {
-    setStatus($('avatar_status'), e.message, 'err');
-  }
-}
+$('profile_refresh').onclick = loadProfiles;
 
-// ─── upload flows ───────────────────────────────────────────────────────────
-$('voice_create').onclick = async () => {
-  const f = $('voice_file').files[0];
-  const name = $('voice_name').value.trim() || 'demo';
-  if (!f) { setStatus($('voice_status'), 'Pick a .wav file first.', 'err'); return; }
+// ─── create profile flow ────────────────────────────────────────────────────
+$('profile_create').onclick = async () => {
+  const name  = $('profile_name').value.trim();
+  const audio = $('profile_audio').files[0];
+  const video = $('profile_video').files[0];
+  if (!name)  { setStatus($('profile_status'), 'Enter a name.', 'err'); return; }
+  if (!audio) { setStatus($('profile_status'), 'Pick a voice file (.wav/.mp3).', 'err'); return; }
+  if (!video) { setStatus($('profile_status'), 'Pick a face video (.mp4).', 'err'); return; }
+
+  $('profile_create').disabled = true;
+  setStatus($('profile_status'),
+    `Step 1/2: uploading voice → extracting speaker embedding (Colab lazy-load can take ~40s on first call)...`);
+
   const fd = new FormData();
-  fd.append('audio', f);
-  fd.append('person_name', name);
-  setStatus($('voice_status'), `Uploading ${f.name} → extracting embedding (Colab lazy-load can take ~40s on first call)...`);
+  fd.append('name', name);
+  fd.append('audio', audio);
+  fd.append('video', video);
+
+  // /api/profiles is a single request that internally does both steps; the
+  // server prints progress in the Colab Cell 4 log. Browser just waits.
   try {
-    const r = await jpostForm('/api/voice-profiles', fd);
-    setStatus($('voice_status'), `Created ${r.id}.`, 'ok');
-    await loadVoices();
-    $('voice_select').value = r.id;
-    document.querySelector('input[name=voice_mode][value=existing]').checked = true;
+    setStatus($('profile_status'),
+      `Creating "${name}"... voice embed (5–60s) then avatar preprocess (1–3 min). This blocks the browser; be patient.`);
+    const r = await jpostForm('/api/profiles', fd);
+    setStatus($('profile_status'),
+      `Created profile "${r.name}" (${r.voice_id} + ${r.avatar_id}).`, 'ok');
+    await loadProfiles();
+    $('profile_select').value = r.name;
+    document.querySelector('input[name=profile_mode][value=existing]').checked = true;
+    updateProfileMode();
+    // Clear inputs.
+    $('profile_audio').value = '';
+    $('profile_video').value = '';
   } catch (e) {
-    setStatus($('voice_status'), e.message, 'err');
+    setStatus($('profile_status'), e.message, 'err');
+  } finally {
+    $('profile_create').disabled = false;
   }
 };
-$('voice_refresh').onclick = loadVoices;
-
-$('avatar_create').onclick = async () => {
-  const f = $('avatar_file').files[0];
-  const name = $('avatar_name').value.trim() || 'demo';
-  if (!f) { setStatus($('avatar_status'), 'Pick a .mp4 file first.', 'err'); return; }
-  const fd = new FormData();
-  fd.append('video', f);
-  fd.append('person_name', name);
-  setStatus($('avatar_status'), `Uploading ${f.name} → MuseTalk preprocessing (1-3 minutes)...`);
-  try {
-    const r = await jpostForm('/api/avatar-profiles', fd);
-    setStatus($('avatar_status'), `Created ${r.id}.`, 'ok');
-    await loadAvatars();
-    $('avatar_select').value = r.id;
-    document.querySelector('input[name=avatar_mode][value=existing]').checked = true;
-  } catch (e) {
-    setStatus($('avatar_status'), e.message, 'err');
-  }
-};
-$('avatar_refresh').onclick = loadAvatars;
 
 // ─── generate + progress polling ────────────────────────────────────────────
 let pollTimer = null;
 
-function selectedVoice() {
-  return modeOf('voice_mode') === 'existing' ? $('voice_select').value : null;
-}
-function selectedAvatar() {
-  return modeOf('avatar_mode') === 'existing' ? $('avatar_select').value : null;
+function selectedProfile() {
+  const mode = document.querySelector('input[name=profile_mode]:checked').value;
+  if (mode !== 'existing') return null;
+  const name = $('profile_select').value;
+  return profilesCache.find(p => p.name === name) || null;
 }
 
 function updateProgress(state) {
@@ -288,14 +282,11 @@ async function pollJob(jobId) {
 }
 
 $('generate').onclick = async () => {
-  const voice_id = selectedVoice();
-  const avatar_id = selectedAvatar();
+  const profile = selectedProfile();
   const text = $('text').value.trim();
-  if (!voice_id) { setStatus($('gen_status'), 'Pick or create a voice profile first.', 'err'); return; }
-  if (!avatar_id) { setStatus($('gen_status'), 'Pick or create an avatar profile first.', 'err'); return; }
-  if (!text)      { setStatus($('gen_status'), 'Enter some text.', 'err'); return; }
+  if (!profile) { setStatus($('gen_status'), 'Pick or create a profile first.', 'err'); return; }
+  if (!text)    { setStatus($('gen_status'), 'Enter some text.', 'err'); return; }
 
-  // Reset UI.
   $('video').classList.add('hidden');
   $('download_row').classList.add('hidden');
   $('bar_fill').style.width = '0%';
@@ -304,7 +295,11 @@ $('generate').onclick = async () => {
   $('generate').disabled = true;
 
   try {
-    const {job_id} = await jpost('/api/generate-video', {voice_id, avatar_id, text});
+    const {job_id} = await jpost('/api/generate-video', {
+      voice_id: profile.voice_id,
+      avatar_id: profile.avatar_id,
+      text,
+    });
     setStatus($('gen_status'), `Job ${job_id} running...`);
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(() => pollJob(job_id), 1000);
@@ -315,8 +310,8 @@ $('generate').onclick = async () => {
 };
 
 // ─── boot ───────────────────────────────────────────────────────────────────
-loadVoices();
-loadAvatars();
+loadProfiles();
+updateProfileMode();
 </script>
 </body>
 </html>
