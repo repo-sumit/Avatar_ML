@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Avatar_ML test</title>
+  <style>
+    body { font-family: -apple-system, Segoe UI, sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; }
+    button { padding: 8px 16px; }
+    input { padding: 6px 8px; }
+    #status { color: #555; font-size: 13px; margin-top: 8px; min-height: 18px; white-space: pre-wrap; }
+    video { width: 512px; height: 512px; background: #000; display: block; margin-top: 16px; }
+    code { background: #f3f3f3; padding: 1px 6px; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <h2>Avatar_ML test page</h2>
+
+  <p style="font-size:13px;color:#666">
+    Replace <code>voice_xxx</code> and <code>avatar_xxx</code> in the script below with the IDs
+    you got from <code>scripts/create_voice_profile.py</code> and
+    <code>scripts/create_avatar_profile.py</code>.
+  </p>
+
+  <p>
+    <button id="connect">Connect</button>
+    <input id="text" style="width:60%" value="Hello, this is my AI avatar speaking in my cloned voice." />
+    <button id="speak" disabled>Speak</button>
+  </p>
+  <div id="status"></div>
+  <video id="video" autoplay playsinline></video>
+
+  <script>
+    // ====== REPLACE THESE BEFORE USE ======
+    const VOICE_PROFILE_ID  = "voice_xxx";
+    const AVATAR_PROFILE_ID = "avatar_xxx";
+    // =======================================
+
+    const API = "http://localhost:8000";
+    let pc, ws, sessionId;
+
+    function setStatus(msg) {
+      const el = document.getElementById("status");
+      el.innerText = (el.innerText + "\n" + msg).split("\n").slice(-6).join("\n");
+    }
+
+    document.getElementById("connect").onclick = async () => {
+      try {
+        setStatus("Creating session...");
+        const r = await fetch(`${API}/api/sessions`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            voice_profile_id: VOICE_PROFILE_ID,
+            avatar_profile_id: AVATAR_PROFILE_ID,
+            mode: "script_to_avatar",
+            stream_transport: "webrtc",
+          }),
+        });
+        if (!r.ok) throw new Error(`POST /api/sessions ${r.status}`);
+        ({ id: sessionId } = await r.json());
+        setStatus(`Session ${sessionId} created.`);
+
+        pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+        pc.ontrack = (e) => {
+          const v = document.getElementById("video");
+          if (v.srcObject !== e.streams[0]) v.srcObject = e.streams[0];
+        };
+        pc.addTransceiver("audio", { direction: "recvonly" });
+        pc.addTransceiver("video", { direction: "recvonly" });
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        setStatus("Sending SDP offer...");
+        const ansResp = await fetch(`${API}/webrtc/offer`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId, sdp: offer.sdp, type: offer.type }),
+        });
+        if (!ansResp.ok) throw new Error(`POST /webrtc/offer ${ansResp.status}`);
+        const ans = await ansResp.json();
+        await pc.setRemoteDescription(ans);
+        setStatus("WebRTC negotiated.");
+
+        ws = new WebSocket(`ws://localhost:8000/ws/sessions/${sessionId}`);
+        ws.onmessage = (e) => setStatus(`WS: ${e.data}`);
+        ws.onerror = () => setStatus("WS error");
+        ws.onclose = () => setStatus("WS closed");
+        ws.onopen = () => {
+          document.getElementById("speak").disabled = false;
+          setStatus("Ready. Type text and click Speak.");
+        };
+      } catch (err) {
+        setStatus(`ERROR: ${err.message || err}`);
+      }
+    };
+
+    document.getElementById("speak").onclick = () => {
+      const text = document.getElementById("text").value.trim();
+      if (!text) return;
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        setStatus("WS not open.");
+        return;
+      }
+      ws.send(JSON.stringify({ type: "speak", text }));
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+storage/
+data/
+samples/*.wav
+samples/*.mp4
+samples/*.mov
+tests/recorded/
